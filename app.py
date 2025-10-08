@@ -2,7 +2,7 @@ import streamlit as st
 from PyPDF2 import PdfReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import os
-import google.generativeai as genai
+import google.generativai as genai
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import SentenceTransformerEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -90,6 +90,8 @@ st.markdown("""
         padding: 14px 18px;
         margin: 4px;
         color: white;
+        border: 1px solid #2c5970;
+        box-shadow: 0 0 8px 1px rgba(0, 150, 255, 0.15);
     }
 
     /* Assistant message bubble styling */
@@ -107,6 +109,14 @@ st.markdown("""
     /* Chat input box styling */
     [data-testid="stChatInput"] textarea {
         color: #FFFFFF; /* Makes the input text white and visible */
+        max-height: 150px; /* Make chat input box smaller */
+    }
+
+    /* Expander styling */
+    [data-testid="stExpander"] summary {
+        font-size: 1rem;
+        color: #add8e6;
+        padding-left: 5px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -172,16 +182,8 @@ def get_vector_store(text_chunks):
         st.error(f"Error creating vector store: {e}")
         st.session_state.faiss_ready = False
 
-def get_conversational_chain():
+def get_conversational_chain(prompt_template):
     """Create a conversational QA chain with a custom prompt and model fallback."""
-    prompt_template = """
-    Answer the question as detailed as possible from the provided context. If the answer is not in
-    the provided context, just say, "The answer is not available in the context." Do not provide a wrong answer.\n\n
-    Context:\n {context}\n
-    Question: \n{question}\n
-
-    Answer:
-    """
     prompt = PromptTemplate(template=prompt_template, input_variables=["context", "question"])
     
     for model_name in MODEL_ORDER:
@@ -262,7 +264,32 @@ def main():
 
         st.markdown("---")
         st.subheader("2. Advanced Options")
-        summarization_mode = st.checkbox("📝 Enable Summarization Mode")
+        if st.button("📝 Summarize PDF", use_container_width=True, disabled=not st.session_state.faiss_ready):
+            with st.spinner("Summarizing document..."):
+                try:
+                    embeddings = get_embedding_model()
+                    vector_store = FAISS.load_local(FAISS_DIR, embeddings, allow_dangerous_deserialization=True)
+                    docs = vector_store.similarity_search("Summarize the entire document", k=len(vector_store.index_to_docstore_id))
+                    
+                    # A specific prompt for summarization
+                    summary_prompt_template = """
+                    Based on the following context, provide a concise summary in bullet points.
+                    Focus on the key topics, findings, and conclusions.\n\n
+                    Context:\n {context}\n
+                    Question: \n{question}\n
+
+                    Summary:
+                    """
+                    chain = get_conversational_chain(summary_prompt_template)
+                    if chain:
+                        response = chain({"input_documents": docs, "question": "Summarize the entire document."}, return_only_outputs=True)
+                        summary = response.get("output_text", "Could not generate a summary.")
+                        st.session_state.messages.append({"role": "assistant", "content": summary, "sources": [doc.page_content[:150] + "..." for doc in docs]})
+                        save_chat_history()
+                        st.rerun()
+
+                except Exception as e:
+                    st.error(f"An error occurred during summarization: {e}")
 
         st.markdown("---")
         st.subheader("3. Manage Session")
@@ -271,7 +298,7 @@ def main():
             save_chat_history()
             st.rerun()
 
-        if st.session_state.messages: # Only show download button if there are messages
+        if st.session_state.messages:
             chat_history_str = format_chat_history(st.session_state.messages)
             st.download_button(
                 label="Download Chat",
@@ -285,7 +312,7 @@ def main():
             shutil.rmtree(FAISS_DIR, ignore_errors=True)
             st.session_state.faiss_ready = False
             st.session_state.messages = []
-            save_chat_history()
+            save__history()
             st.success("Documents and index deleted.")
             time.sleep(1)
             st.rerun()
@@ -303,8 +330,8 @@ def main():
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
-            if "sources" in msg:
-                with st.expander("📄 View Source Context"):
+            if "sources" in msg and msg["sources"]:
+                with st.expander("View Source Context"):
                     st.info("".join(msg["sources"]))
 
     # Chat input
@@ -319,25 +346,27 @@ def main():
                 try:
                     embeddings = get_embedding_model()
                     vector_store = FAISS.load_local(FAISS_DIR, embeddings, allow_dangerous_deserialization=True)
+                    docs = vector_store.similarity_search(prompt, k=4)
                     
-                    if summarization_mode:
-                        # Summarize the entire document
-                        docs = vector_store.similarity_search("Summarize the following document:", k=len(vector_store.index_to_docstore_id))
-                        prompt = "Summarize the entire document into bullet points."
-                    else:
-                        docs = vector_store.similarity_search(prompt, k=4)
-                    
-                    chain = get_conversational_chain()
+                    # Standard QA prompt
+                    qa_prompt_template = """
+                    Answer the question as detailed as possible from the provided context. If the answer is not in
+                    the provided context, just say, "The answer is not available in the context." Do not provide a wrong answer.\n\n
+                    Context:\n {context}\n
+                    Question: \n{question}\n
+
+                    Answer:
+                    """
+                    chain = get_conversational_chain(qa_prompt_template)
                     if chain:
                         response = chain({"input_documents": docs, "question": prompt}, return_only_outputs=True)
                         answer = response.get("output_text", "Sorry, I couldn't generate a response.")
                         if st.session_state.get('last_model_used'):
-                           answer += f"\n\n*— Generated by {st.session_state.last_model_used}*";
+                           answer += f"\n\n*— Generated by {st.session_state.last_model_used}*"
                     else:
                         answer = "The conversation chain could not be initialized. Please check the logs."
                         
                     st.markdown(answer)
-                    # Add sources to the message for display
                     sources = [doc.page_content[:150] + "..." for doc in docs]
                     st.session_state.messages.append({"role": "assistant", "content": answer, "sources": sources})
                     save_chat_history()
