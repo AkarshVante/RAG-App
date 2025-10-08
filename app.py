@@ -11,6 +11,7 @@ from langchain.prompts import PromptTemplate
 from dotenv import load_dotenv
 import shutil
 import time
+import json
 
 # --- Configuration ---
 # Load environment variables from .env file for local development
@@ -129,6 +130,7 @@ except Exception as e:
 MODEL_ORDER = ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"]
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 FAISS_DIR = "faiss_index"
+CHAT_HISTORY_FILE = "chat_history.json"
 
 
 # --- Helper Functions ---
@@ -139,10 +141,11 @@ def get_pdf_text(pdf_docs):
     for pdf in pdf_docs:
         try:
             pdf_reader = PdfReader(pdf)
-            for page in pdf_reader.pages:
+            # Add metadata for source highlighting
+            for i, page in enumerate(pdf_reader.pages):
                 page_text = page.extract_text()
                 if page_text:
-                    text += page_text
+                    text += f"\n--- Source: {pdf.name}, Page: {i+1} ---\n{page_text}"
         except Exception as e:
             st.warning(f"Could not read file: {pdf.name}. Error: {e}")
     return text
@@ -205,13 +208,25 @@ def format_chat_history(messages):
         chat_str += "-"*20 + "\n\n"
     return chat_str
 
+def save_chat_history():
+    """Save chat history to a JSON file."""
+    with open(CHAT_HISTORY_FILE, "w") as f:
+        json.dump(st.session_state.messages, f)
+
+def load_chat_history():
+    """Load chat history from a JSON file if it exists."""
+    if os.path.exists(CHAT_HISTORY_FILE):
+        with open(CHAT_HISTORY_FILE, "r") as f:
+            return json.load(f)
+    return []
+
 # --- Main Application ---
 def main():
     """Main function to run the Streamlit application."""
 
     # Initialize session state variables
     if "messages" not in st.session_state:
-        st.session_state.messages = []
+        st.session_state.messages = load_chat_history()
     if "faiss_ready" not in st.session_state:
         st.session_state.faiss_ready = os.path.isdir(FAISS_DIR)
 
@@ -246,9 +261,14 @@ def main():
                     st.error("Processing failed. No readable text found in PDFs.")
 
         st.markdown("---")
+        st.subheader("2. Advanced Options")
+        summarization_mode = st.checkbox("📝 Enable Summarization Mode")
+
+        st.markdown("---")
         st.subheader("3. Manage Session")
         if st.button("Clear Conversation", use_container_width=True):
             st.session_state.messages = []
+            save_chat_history()
             st.rerun()
 
         if st.session_state.messages: # Only show download button if there are messages
@@ -265,6 +285,7 @@ def main():
             shutil.rmtree(FAISS_DIR, ignore_errors=True)
             st.session_state.faiss_ready = False
             st.session_state.messages = []
+            save_chat_history()
             st.success("Documents and index deleted.")
             time.sleep(1)
             st.rerun()
@@ -282,6 +303,9 @@ def main():
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+            if "sources" in msg:
+                with st.expander("📄 View Source Context"):
+                    st.info("".join(msg["sources"]))
 
     # Chat input
     prompt_placeholder = "Please process documents first..." if not st.session_state.faiss_ready else "Ask a question..."
@@ -295,7 +319,13 @@ def main():
                 try:
                     embeddings = get_embedding_model()
                     vector_store = FAISS.load_local(FAISS_DIR, embeddings, allow_dangerous_deserialization=True)
-                    docs = vector_store.similarity_search(prompt, k=4)
+                    
+                    if summarization_mode:
+                        # Summarize the entire document
+                        docs = vector_store.similarity_search("Summarize the following document:", k=len(vector_store.index_to_docstore_id))
+                        prompt = "Summarize the entire document into bullet points."
+                    else:
+                        docs = vector_store.similarity_search(prompt, k=4)
                     
                     chain = get_conversational_chain()
                     if chain:
@@ -307,18 +337,18 @@ def main():
                         answer = "The conversation chain could not be initialized. Please check the logs."
                         
                     st.markdown(answer)
-                    st.session_state.messages.append({"role": "assistant", "content": answer})
+                    # Add sources to the message for display
+                    sources = [doc.page_content[:150] + "..." for doc in docs]
+                    st.session_state.messages.append({"role": "assistant", "content": answer, "sources": sources})
+                    save_chat_history()
 
                 except Exception as e:
                     error_message = f"An error occurred: {e}"
                     st.error(error_message)
                     st.session_state.messages.append({"role": "assistant", "content": error_message})
+                    save_chat_history()
+        st.rerun()
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
 
