@@ -2,7 +2,7 @@ import streamlit as st
 from PyPDF2 import PdfReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import os
-import google.generativai as genai
+import google.generativeai as genai
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import SentenceTransformerEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -312,7 +312,7 @@ def main():
             shutil.rmtree(FAISS_DIR, ignore_errors=True)
             st.session_state.faiss_ready = False
             st.session_state.messages = []
-            save__history()
+            save_chat_history()
             st.success("Documents and index deleted.")
             time.sleep(1)
             st.rerun()
