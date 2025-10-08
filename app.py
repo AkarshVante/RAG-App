@@ -2,9 +2,10 @@ import streamlit as st
 from PyPDF2 import PdfReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import os
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 import google.generativeai as genai
 from langchain_community.vectorstores import FAISS
+# Import for local embeddings
+from langchain_community.embeddings import SentenceTransformerEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.chains.question_answering import load_qa_chain
 from langchain.prompts import PromptTemplate
@@ -55,9 +56,10 @@ except Exception as e:
 
 
 # --- Constants ---
-# Define the preferred model order, with fallbacks
+# Define the preferred model order, with fallbacks for the generative part
 MODEL_ORDER = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
-EMBEDDING_MODEL = "models/embedding-001"
+# Define the local model for embeddings to avoid API rate limits
+EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 FAISS_DIR = "faiss_index"
 
 
@@ -84,9 +86,10 @@ def get_text_chunks(text):
     return chunks
 
 def get_vector_store(text_chunks):
-    """Create and save a FAISS vector store from text chunks."""
+    """Create and save a FAISS vector store from text chunks using a local model."""
     try:
-        embeddings = GoogleGenerativeAIEmbeddings(model=EMBEDDING_MODEL)
+        # Use a local Sentence Transformer model for embeddings to avoid API calls
+        embeddings = SentenceTransformerEmbeddings(model_name=EMBEDDING_MODEL_NAME)
         vector_store = FAISS.from_texts(text_chunks, embedding=embeddings)
         vector_store.save_local(FAISS_DIR)
         st.session_state.faiss_ready = True
@@ -127,10 +130,10 @@ def user_input(user_question):
         return
 
     try:
-        embeddings = GoogleGenerativeAIEmbeddings(model=EMBEDDING_MODEL)
+        # Use the same local model for embedding the user's question
+        embeddings = SentenceTransformerEmbeddings(model_name=EMBEDDING_MODEL_NAME)
         
         # Load the FAISS index with support for dangerous deserialization if needed
-        # This is required by newer versions of FAISS
         new_db = FAISS.load_local(FAISS_DIR, embeddings, allow_dangerous_deserialization=True)
         
         docs = new_db.similarity_search(user_question)
@@ -195,3 +198,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
