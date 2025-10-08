@@ -6,3 +6,4 @@ google-generativeai
 langchain-community
 faiss-cpu
 python-dotenv
+sentence-transformers
