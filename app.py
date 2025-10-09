@@ -418,17 +418,15 @@
 # if __name__ == "__main__":
 #     main()
 
-
 import streamlit as st
 from PyPDF2 import PdfReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import os
 import google.generativeai as genai
 from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.embeddings import SentenceTransformerEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.chains import create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.chains.question_answering import load_qa_chain
 from langchain.prompts import PromptTemplate
 from dotenv import load_dotenv
 import shutil
@@ -613,7 +611,7 @@ def get_text_chunks(text):
 @st.cache_resource
 def get_embedding_model():
     """Load the sentence transformer model, cached for performance."""
-    return HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
+    return SentenceTransformerEmbeddings(model_name=EMBEDDING_MODEL_NAME)
 
 def get_vector_store(text_chunks):
     """Create and save a FAISS vector store from text chunks using a local model."""
@@ -626,13 +624,16 @@ def get_vector_store(text_chunks):
         st.error(f"Error creating vector store: {e}")
         st.session_state.faiss_ready = False
 
-def get_llm_model():
-    """Create a model instance with fallback logic."""
+def get_conversational_chain(prompt_template):
+    """Create a conversational QA chain with a custom prompt and model fallback."""
+    prompt = PromptTemplate(template=prompt_template, input_variables=["context", "question"])
+    
     for model_name in MODEL_ORDER:
         try:
             model = ChatGoogleGenerativeAI(model=model_name, temperature=0.3)
+            chain = load_qa_chain(model, chain_type="stuff", prompt=prompt)
             st.session_state.last_model_used = model_name
-            return model
+            return chain
         except Exception:
             st.warning(f"Model {model_name} not available. Trying next model.")
     
@@ -718,16 +719,14 @@ def main():
                     Based on the following context, provide a concise summary in bullet points.
                     Focus on the key topics, findings, and conclusions.\n\n
                     Context:\n {context}\n
-                    Input: \n{input}\n
+                    Question: \n{question}\n
 
                     Summary:
                     """
-                    model = get_llm_model()
-                    if model:
-                        prompt = PromptTemplate.from_template(summary_prompt_template)
-                        chain = create_stuff_documents_chain(model, prompt)
-                        summary = chain.invoke({"context": docs, "input": "Summarize the entire document."})
-                        
+                    chain = get_conversational_chain(summary_prompt_template)
+                    if chain:
+                        response = chain({"input_documents": docs, "question": "Summarize the entire document."}, return_only_outputs=True)
+                        summary = response.get("output_text", "Could not generate a summary.")
                         st.session_state.messages.append({"role": "assistant", "content": summary, "sources": [doc.page_content[:150] + "..." for doc in docs]})
                         save_chat_history()
                         st.rerun()
@@ -806,43 +805,35 @@ def main():
                 try:
                     embeddings = get_embedding_model()
                     vector_store = FAISS.load_local(FAISS_DIR, embeddings, allow_dangerous_deserialization=True)
-                    retriever = vector_store.as_retriever(search_kwargs={"k": 4})
+                    docs = vector_store.similarity_search(prompt, k=4)
                     
                     qa_prompt_template = """
                     Answer the question as detailed as possible from the provided context. If the answer is not in
                     the provided context, just say, "The answer is not available in the context." Do not provide a wrong answer.\n\n
                     Context:\n {context}\n
-                    Question: \n{input}\n
+                    Question: \n{question}\n
 
                     Answer:
                     """
-                    model = get_llm_model()
-                    if model:
-                        prompt_template = PromptTemplate.from_template(qa_prompt_template)
-                        question_answer_chain = create_stuff_documents_chain(model, prompt_template)
-                        chain = create_retrieval_chain(retriever, question_answer_chain)
-                        
-                        response = chain.invoke({"input": prompt})
-                        answer = response.get("answer", "Sorry, I couldn't generate a response.")
-                        context_docs = response.get("context", [])
-                        sources = [doc.page_content[:150] + "..." for doc in context_docs] if context_docs else []
-
+                    chain = get_conversational_chain(qa_prompt_template)
+                    if chain:
+                        response = chain({"input_documents": docs, "question": prompt}, return_only_outputs=True)
+                        answer = response.get("output_text", "Sorry, I couldn't generate a response.")
                     else:
-                        answer = "The conversation chain could not be initialized. Please check the model availability and API key."
-                        sources = []
+                        answer = "The conversation chain could not be initialized. Please check the logs."
                         
                     st.markdown(answer)
+                    sources = [doc.page_content[:150] + "..." for doc in docs]
                     st.session_state.messages.append({"role": "assistant", "content": answer, "sources": sources})
                     save_chat_history()
 
                 except Exception as e:
                     error_message = f"An error occurred: {e}"
                     st.error(error_message)
-                    st.session_state.messages.append({"role": "assistant", "content": error_message, "sources": []})
+                    st.session_state.messages.append({"role": "assistant", "content": error_message})
                     save_chat_history()
         st.rerun()
 
 if __name__ == "__main__":
     main()
-
 
