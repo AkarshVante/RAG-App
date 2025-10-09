@@ -477,7 +477,7 @@ st.markdown("""
         font-size: 2.5em;
         color: #ffffff;
         text-align: center;
-        text-shadow: text-shadow: 0 0 0.7px rgba(0, 255, 0, 0.6),0 0 6px rgba(0, 255, 0, 0.4),0 0 12px rgba(0, 255, 0, 0.3);
+        text-shadow: text-shadow: 0 0 0.8px rgba(0, 255, 0, 0.6),0 0 6px rgba(0, 255, 0, 0.4),0 0 12px rgba(0, 255, 0, 0.3);
     }
     
     /* --- Sidebar Styling --- */
