@@ -57,7 +57,8 @@ st.markdown("""
         font-size: 2.5em;
         color: #ffffff;
         text-align: center;
-        text-shadow: 0 0 10px #00ff00, 0 0 20px #00ff00, 0 0 40px #00ff00, 0 0 60px #00ff00;
+        text-shadow: 0 0 1px rgba(0, 255, 0, 0.6),0 0 6px rgba(0, 255, 0, 0.4),0 0 12px rgba(0, 255, 0, 0.3);
+        #text-shadow: 0 0 1px #00ff00, 0 0 20px #00ff00, 0 0 40px #00ff00, 0 0 60px #00ff00;
     }
     
     /* --- Sidebar Styling --- */
@@ -146,7 +147,7 @@ st.markdown("""
 
 
 # --- Google API Configuration ---
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
     st.error("Google API key not found. Please set it in Streamlit secrets or as an environment variable.")
     st.stop()
