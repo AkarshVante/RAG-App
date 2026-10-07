@@ -151,7 +151,7 @@ except Exception as e:
     st.stop()
 
 
-# --- Constants ---
+# --- Constants --
 # Define the preferred model order
 MODEL_ORDER = ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"]
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
